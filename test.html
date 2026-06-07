@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Outline Stroke – Selbsttest</title>
+  <style>
+    body { font: 14px/1.5 sans-serif; background: #1e1e22; color: #eee; padding: 20px; }
+    h1 { font-size: 18px; }
+    .case { display: inline-block; margin: 10px; padding: 10px; background: #2a2a30; border-radius: 8px; vertical-align: top; }
+    .case h2 { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
+    .case .metrics { font-size: 11px; color: #9aa; margin: 0 0 8px; font-family: monospace; }
+    svg { background: #fff; border-radius: 4px; display: block; }
+    .pass { color: #2fdca0; } .fail { color: #ff3277; }
+    #summary { font-size: 16px; margin-top: 16px; }
+    p.legend { color: #9aa; }
+  </style>
+</head>
+<body>
+  <h1>Outline Stroke – Selbsttest</h1>
+  <p class="legend">Links: Original mit Stroke · Rechts: berechnete Outline als gefüllter Pfad.
+  „strict"-Fälle prüfen zusätzlich Invarianten: <b>gleichmäßige Breite</b> entlang der Mittellinie
+  (fängt Dellen/Kerben) und <b>Cap-Ausdehnung ≈ r</b> (fängt Paddel-/Keil-Caps).</p>
+  <div id="cases"></div>
+  <div id="summary"></div>
+
+  <script src="vendor/paper-core.min.js" onerror="this.remove();document.write('\x3Cscript src=&quot;https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-core.min.js&quot;>\x3C/script>')"></script>
+  <script src="vendor/paperjs-offset.min.js" onerror="this.remove();document.write('\x3Cscript src=&quot;https://unpkg.com/paperjs-offset@1.0.8/dist/paperjs-offset.min.js&quot;>\x3C/script>')"></script>
+  <script src="outline-core.js"></script>
+  <script>
+    var canvas = document.createElement('canvas');
+    canvas.width = 16; canvas.height = 16;
+    paper.setup(canvas);
+
+    var SIZE = 160;
+
+    // Invarianten-Check: gleichmäßige Breite + Cap-Ausdehnung.
+    // Nur für offene, zentrierte Strokes sinnvoll (Mittellinie = Sample-Basis).
+    function checkStroke(centerD, outlineD, r, wantCap) {
+      var c = paper.PathItem.create(centerD); c.remove();
+      var o2 = paper.PathItem.create(outlineD); o2.remove();
+      var len = c.length, widthErr = 0;
+      for (var i = 0; i <= 80; i++) {
+        var p = c.getPointAt(len * i / 80);
+        // Cap-Regionen auslassen – dort ist die „Breite" definitionsgemäß != r
+        if (p.getDistance(c.firstSegment.point) < r * 1.1 ||
+            p.getDistance(c.lastSegment.point) < r * 1.1) continue;
+        widthErr = Math.max(widthErr, Math.abs(o2.getNearestPoint(p).getDistance(p) - r));
+      }
+      var capErr = 0;
+      if (wantCap) {
+        var clone = o2.clone({ insert: false }); clone.flatten(0.3);
+        // CompoundPath -> Segmente aller Kinder einsammeln, sonst .segments direkt
+        var segs = clone.children
+          ? clone.children.reduce(function (a, ch) { return a.concat(ch.segments); }, [])
+          : clone.segments;
+        var ext = function (endPt, refPt) {
+          var t = endPt.subtract(refPt).normalize(), mx = -1e9;
+          segs.forEach(function (s) {
+            if (s.point.getDistance(endPt) < 2.2 * r) {
+              var pr = s.point.subtract(endPt).dot(t);
+              if (pr > mx) mx = pr;
+            }
+          });
+          return mx;
+        };
+        capErr = Math.max(
+          Math.abs(ext(c.lastSegment.point, c.getPointAt(len - 1)) - r),
+          Math.abs(ext(c.firstSegment.point, c.getPointAt(1)) - r));
+        clone.remove();
+      }
+      c.remove(); o2.remove();
+      return { widthErr: widthErr, capErr: capErr };
+    }
+
+    var tests = [
+      // strict: prüft die Bug-Klasse (Delle/Keil/Paddel) per Invariante
+      { name: 'Bogen w8, zentriert, rund  [strict]',
+        d: 'M 20 120 C 40 20, 120 20, 140 120', width: 8, alignment: 'center', cap: 'round', strict: true },
+      { name: 'Bogen w20, zentriert, rund  [strict]  (Regression der Delle)',
+        d: 'M 20 120 C 40 20, 120 20, 140 120', width: 20, alignment: 'center', cap: 'round', strict: true },
+      { name: 'Offene Bogen-Ecke w16, rund  [strict]',
+        d: 'M 30 30 C 30 100, 60 130, 130 130', width: 16, alignment: 'center', cap: 'round', strict: true },
+      { name: 'Geschlossenes Rechteck, zentriert',
+        d: 'M 30 30 L 130 30 L 130 130 L 30 130 Z', width: 12, alignment: 'center', cap: 'none' },
+      { name: 'Geschlossener Kreis, innen',
+        d: 'M 80 20 A 60 60 0 1 1 79.9 20 Z', width: 16, alignment: 'inner', cap: 'none' },
+      { name: 'Geschlossener Kreis, außen',
+        d: 'M 80 35 A 45 45 0 1 1 79.9 35 Z', width: 14, alignment: 'outer', cap: 'none' },
+      { name: 'Zickzack offen, scharfe Ecken',
+        d: 'M 20 130 L 55 40 L 90 130 L 125 40', width: 10, alignment: 'center', cap: 'round' },
+    ];
+
+    var passed = 0;
+    var container = document.getElementById('cases');
+
+    tests.forEach(function (t) {
+      var div = document.createElement('div');
+      div.className = 'case';
+      var ok = false, info = '', metrics = '', outD = '';
+      try {
+        var r = OutlineCore.outlineStroke(t.d, { width: t.width, alignment: t.alignment, cap: t.cap, join: 'miter' });
+        outD = r.pathData;
+        ok = outD.length > 10;
+        if (r.warning) info = r.warning;
+        if (t.strict && ok) {
+          var rad = t.width / 2;
+          var m = checkStroke(t.d, outD, rad, t.cap === 'round');
+          var tolW = Math.max(0.4, 0.18 * rad);
+          var tolC = Math.max(0.6, 0.25 * rad);
+          var wOk = m.widthErr < tolW;
+          var cOk = (t.cap !== 'round') || m.capErr < tolC;
+          ok = wOk && cOk;
+          metrics = 'widthErr=' + m.widthErr.toFixed(3) + ' (<' + tolW.toFixed(2) + ') ' + (wOk ? '✓' : '✗') +
+                    ' · capErr=' + m.capErr.toFixed(3) + ' (<' + tolC.toFixed(2) + ') ' + (cOk ? '✓' : '✗');
+        }
+      } catch (e) { info = e.message; ok = false; }
+      if (ok) passed++;
+
+      div.innerHTML =
+        '<h2 class="' + (ok ? 'pass' : 'fail') + '">' + (ok ? '✓ ' : '✗ ') + t.name +
+        (info ? ' <small>(' + info + ')</small>' : '') + '</h2>' +
+        (metrics ? '<div class="metrics">' + metrics + '</div>' : '') +
+        '<svg width="' + (SIZE * 2 + 10) + '" height="' + SIZE + '" viewBox="0 0 330 160">' +
+        '<path d="' + t.d + '" fill="none" stroke="#6911d4" stroke-width="' + t.width + '"' +
+        (t.cap === 'round' ? ' stroke-linecap="round" stroke-linejoin="round"' : '') + '/>' +
+        '<g transform="translate(170,0)"><path d="' + outD + '" fill="#6911d4" fill-rule="evenodd"/></g>' +
+        '</svg>';
+      container.appendChild(div);
+    });
+
+    document.getElementById('summary').innerHTML =
+      passed === tests.length
+        ? '<span class="pass">Alle ' + passed + ' Tests bestanden ✓ — Geometrie sauber.</span>'
+        : '<span class="fail">' + passed + '/' + tests.length + ' Tests bestanden.</span>';
+  </script>
+</body>
+</html>

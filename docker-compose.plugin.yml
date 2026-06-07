@@ -1,0 +1,17 @@
+# Outline-Stroke-Plugin als statischen Dienst neben Penpot hosten.
+#
+# Variante A (eigene Datei):
+#   docker compose -f docker-compose.yaml -f docker-compose.plugin.yml up -d
+#
+# Variante B: den Service-Block einfach in die bestehende
+#   Penpot docker-compose.yaml unter "services:" kopieren.
+
+services:
+  penpot-plugin-outline-stroke:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "9400:80"
+    volumes:
+      - ./penpot-outline-stroke:/usr/share/nginx/html:ro
+      - ./penpot-outline-stroke/nginx.conf:/etc/nginx/conf.d/default.conf:ro

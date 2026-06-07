@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Outline Stroke</title>
+  <style>
+    :root {
+      --bg: #18181a; --fg: #ffffff; --muted: #8f9da3;
+      --accent: #7efff5; --accent-fg: #18181a;
+      --border: #2e3434; --warn: #fdb600; --err: #ff3277; --ok: #2fdca0;
+    }
+    [data-theme="light"] {
+      --bg: #ffffff; --fg: #18181a; --muted: #65696e;
+      --accent: #6911d4; --accent-fg: #ffffff;
+      --border: #dcdee0; --warn: #b97a00; --err: #c8003c; --ok: #0b7d52;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 14px; background: var(--bg); color: var(--fg);
+      font: 12px/1.5 "Helvetica Neue", Arial, sans-serif;
+    }
+    h1 { font-size: 13px; margin: 0 0 4px; }
+    p.hint { color: var(--muted); margin: 0 0 14px; }
+    label { display: flex; align-items: center; gap: 8px; margin: 10px 0; cursor: pointer; }
+    select {
+      background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 4px 6px; font: inherit;
+    }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0; }
+    button {
+      width: 100%; margin-top: 12px; padding: 10px; border: 0; border-radius: 8px;
+      background: var(--accent); color: var(--accent-fg);
+      font-weight: 600; font-size: 12px; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    #status { margin-top: 12px; min-height: 18px; }
+    #status .ok { color: var(--ok); }
+    #status .err { color: var(--err); }
+    ul#warnings { margin: 8px 0 0; padding-left: 16px; color: var(--warn); }
+    ul#warnings li { margin: 2px 0; }
+    .loading { color: var(--muted); }
+  </style>
+</head>
+<body data-theme="dark">
+  <h1>Outline Stroke</h1>
+  <p class="hint">Wandelt den Stroke der ausgewählten Shapes in einen gefüllten Pfad um (Taiga&nbsp;US&nbsp;#2956 als Plugin).</p>
+
+  <label><input type="checkbox" id="keep" checked /> Original behalten</label>
+
+  <div class="row">
+    <span>Ecken (Join)</span>
+    <select id="join">
+      <option value="miter" selected>Gehrung</option>
+      <option value="round">Rund</option>
+      <option value="bevel">Abgeflacht</option>
+    </select>
+  </div>
+  <p class="hint" style="margin:-4px 0 10px; font-size:11px;">Wirkt bei geschlossenen Formen. Offene Pfade werden glatt outlined (Ecken automatisch).</p>
+
+  <div class="row">
+    <span>Enden (Cap)</span>
+    <select id="cap">
+      <option value="round" selected>Rund</option>
+      <option value="butt">Flach</option>
+      <option value="square">Quadratisch</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <span>Platzierung</span>
+    <select id="placement">
+      <option value="beside" selected>Neben Original</option>
+      <option value="inplace">An Ort (deckungsgleich)</option>
+    </select>
+  </div>
+
+  <button id="run" disabled>Bibliotheken laden …</button>
+  <div id="status"></div>
+  <ul id="warnings"></ul>
+  <p class="hint" id="ver" style="margin-top:16px; opacity:.55; font-size:11px;"></p>
+
+  <script>
+    // Build-Marker: belegt eindeutig, welche Plugin-Version im iframe läuft.
+    var BUILD = 'v15 · 2026-06-07 · merge-to-one';
+    console.log('[OutlineStroke] Build ' + BUILD);
+
+    // Theme aus Query-Param (von plugin.js übergeben) + Live-Updates
+    var params = new URLSearchParams(window.location.search);
+    document.body.dataset.theme = params.get('theme') || 'dark';
+
+    var runBtn = document.getElementById('run');
+    var statusEl = document.getElementById('status');
+    var warnEl = document.getElementById('warnings');
+    document.getElementById('ver').textContent = 'Build: ' + BUILD;
+
+    function setStatus(html, cls) {
+      statusEl.innerHTML = cls ? '<span class="' + cls + '">' + html + '</span>' : html;
+    }
+    function showWarnings(list) {
+      warnEl.innerHTML = '';
+      (list || []).forEach(function (w) {
+        var li = document.createElement('li');
+        li.textContent = w;
+        warnEl.appendChild(li);
+      });
+    }
+
+    // Libraries laden: erst lokal (vendor/), dann CDN-Fallback
+    function loadScript(srcs) {
+      return new Promise(function (resolve, reject) {
+        function tryNext(i) {
+          if (i >= srcs.length) return reject(new Error('Konnte nicht geladen werden: ' + srcs.join(', ')));
+          var s = document.createElement('script');
+          s.src = srcs[i];
+          s.onload = function () { resolve(srcs[i]); };
+          s.onerror = function () { s.remove(); tryNext(i + 1); };
+          document.head.appendChild(s);
+        }
+        tryNext(0);
+      });
+    }
+
+    var ready = false;
+    loadScript([
+      'vendor/paper-core.min.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-core.min.js',
+      'https://unpkg.com/paper@0.12.18/dist/paper-core.min.js',
+    ])
+      .then(function () {
+        // paper headless initialisieren (Canvas nur intern für Berechnungen)
+        var canvas = document.createElement('canvas');
+        canvas.width = 16; canvas.height = 16;
+        paper.setup(canvas);
+        return loadScript([
+          'vendor/paperjs-offset.min.js',
+          'https://unpkg.com/paperjs-offset@1.0.8/dist/paperjs-offset.min.js',
+        ]);
+      })
+      .then(function () { return loadScript(['outline-core.js']); })
+      .then(function () {
+        ready = true;
+        runBtn.disabled = false;
+        runBtn.textContent = 'Stroke in Pfad umwandeln';
+        setStatus('');
+      })
+      .catch(function (e) {
+        setStatus('Bibliotheken konnten nicht geladen werden (Internet nötig oder vendor/-Dateien hinterlegen).<br>' + e.message, 'err');
+      });
+
+    // Kommunikation mit plugin.js
+    function send(msg) { parent.postMessage(msg, '*'); }
+
+    runBtn.addEventListener('click', function () {
+      if (!ready) return;
+      runBtn.disabled = true;
+      setStatus('<span class="loading">Berechne …</span>');
+      showWarnings([]);
+      send({
+        type: 'outline',
+        keepOriginal: document.getElementById('keep').checked,
+        join: document.getElementById('join').value,
+        placement: document.getElementById('placement').value,
+      });
+    });
+
+    window.addEventListener('message', function (event) {
+      var msg = event.data;
+      if (!msg) return;
+
+      if (msg.source === 'penpot' && msg.type === 'themechange') {
+        document.body.dataset.theme = msg.theme;
+        return;
+      }
+      if (msg.source !== 'outline-stroke') return;
+
+      if (msg.type === 'status') {
+        runBtn.disabled = false;
+        setStatus(msg.message, msg.level === 'error' ? 'err' : '');
+        showWarnings(msg.warnings);
+        return;
+      }
+
+      if (msg.type === 'compute') {
+        var rawWarnings = (msg.warnings || []).slice();
+        // Cap kommt aus dem UI-Dropdown (verlässlich), nicht aus der Penpot-API,
+        // die den Linecap importierter SVGs als „none“ meldet -> sonst Butt-Cap-Keil.
+        var capChoice = document.getElementById('cap').value;
+        // Alle Outlines PRO FARBE per Boolean-Union zu EINER Form vereinen.
+        // -> Am Ende ein Shape je Farbe (statt vieler Einzel-/Duplikat-Shapes).
+        var byColor = {};
+        (msg.shapes || []).forEach(function (s) {
+          try {
+            var r = OutlineCore.outlineStroke(s.d, {
+              width: s.width,
+              alignment: s.alignment,
+              cap: capChoice,
+              join: msg.join,
+            });
+            if (r.warning) rawWarnings.push('„' + s.name + '“: ' + r.warning);
+            var col = s.color || '#000000';
+            var op = (s.opacity != null) ? s.opacity : 1;
+            var key = col + '|' + op;
+            var grp = byColor[key] || (byColor[key] = { color: col, opacity: op, item: null });
+            var p = paper.PathItem.create(r.pathData);
+            p.remove();
+            if (!grp.item) {
+              grp.item = p;
+            } else {
+              var u = grp.item.unite(p, { insert: false });
+              grp.item.remove();
+              p.remove();
+              grp.item = u;
+            }
+          } catch (e) {
+            rawWarnings.push('„' + s.name + '“: ' + (e.message || 'Berechnung fehlgeschlagen'));
+          }
+        });
+
+        var results = [];
+        Object.keys(byColor).forEach(function (key) {
+          var grp = byColor[key];
+          if (!grp.item || grp.item.isEmpty()) { if (grp.item) grp.item.remove(); return; }
+          var b = grp.item.bounds;
+          results.push({
+            id: 'merged:' + key,
+            pathData: grp.item.pathData,
+            absX: b.x, absY: b.y, absW: b.width, absH: b.height,
+            color: grp.color, opacity: grp.opacity,
+          });
+          grp.item.remove();
+        });
+
+        // Identische Warnungen (durch Duplikate) zusammenfassen.
+        var seen = {}, warnings = [];
+        rawWarnings.forEach(function (w) { if (!seen[w]) { seen[w] = 1; warnings.push(w); } });
+
+        send({ type: 'apply', results: results, warnings: warnings });
+        return;
+      }
+
+      if (msg.type === 'done') {
+        runBtn.disabled = false;
+        if (msg.count > 0) {
+          setStatus('✓ ' + msg.count + ' Shape' + (msg.count === 1 ? '' : 's') + ' umgewandelt', 'ok');
+        } else {
+          setStatus('Keine Shapes umgewandelt – siehe Hinweise.', 'err');
+        }
+        showWarnings(msg.warnings);
+        return;
+      }
+    });
+  </script>
+</body>
+</html>
