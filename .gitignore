@@ -1,2 +1,25 @@
 .DS_Store
 node_modules/
+
+# secrets / local config
+.env
+.env.*
+*.pem
+*.key
+*.crt
+id_rsa
+id_rsa.pub
+*.p12
+*.pfx
+
+# local / editor files
+.vscode/
+.idea/
+*.code-workspace
+
+# logs / cache / build
+*.log
+dist/
+build/
+.cache/
+tmp/
