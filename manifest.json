@@ -1,7 +1,7 @@
 {
   "name": "Outline Stroke",
   "description": "Konvertiert Strokes in gefüllte Pfade – wie 'Outline Stroke' in Illustrator/Figma (Workaround für Penpot Taiga US #2956).",
-  "code": "/plugin.js",
+  "code": "plugin.js",
   "permissions": [
     "content:read",
     "content:write"
